@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+node_modules
+.inspect_temp_xlsx.mjs
+.update_feb_2026.mjs
+.verify_generated_workbook.mjs
