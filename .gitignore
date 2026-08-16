@@ -6,3 +6,4 @@ node_modules
 .inspect_temp_xlsx.mjs
 .update_feb_2026.mjs
 .verify_generated_workbook.mjs
+Export_trend/

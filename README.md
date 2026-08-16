@@ -22,6 +22,10 @@ Finder에서 `run_econo_ui.command`를 더블클릭하거나 터미널에서 다
 
 좌측 상단 `update_general` 버튼은 `data/0_general.xlsx`를, `update_economic_state` 버튼은 `data/1.economic_state.xlsx`를, `update_gdp` 버튼은 `data/2.GDP.xlsx`를 갱신합니다. 세 기능은 실행 로그, 진행률 바, 중지 버튼을 공유하며 선택한 버튼에 맞춰 우측 표의 제공처와 수집 방식이 전환됩니다.
 
+`Export Trend` 탭의 `최신 자료 다운로드`는 실행 시점에 산업통상부 수출입과 게시판을 검색하여 가장 최근 `YYYY년 M월 수출입 동향` PDF를 `Export_trend` 폴더에 저장합니다. 같은 월·같은 내용은 중복 파일을 만들지 않으며, 공식 PDF가 수정되면 기존판을 revision 파일로 보존합니다. `PDF 열기`는 최신 파일을 macOS 기본 PDF 뷰어로 엽니다.
+
+다운로드와 동시에 PDF의 수출·수입·무역수지, 일평균 수출, 20대 품목, 주요 지역과 부록의 월별 수출 실적을 추출하고 내부 합계 검증을 수행합니다. 탭 안에서 `요약`, `일평균 수출`, `수출액·증감률`, `20대 품목`, `주요 지역`을 전환할 수 있습니다. 품목·지역 화면은 항목 선택 상자와 최신월 전체 표를 함께 제공하며, 이후 매월 다운로드한 보고서가 쌓이면 선택 항목의 월별 이력이 자동으로 늘어납니다.
+
 `Graph` 탭의 `1번 버튼`은 `data/0_general.xlsx`의 월별 KOSPI와 선행지수 순환변동치를 좌·우 이중축 선 그래프로 UI 내부에 표시합니다. 버튼을 누를 때마다 현재 통합문서를 다시 읽으며, Graph 1이 열린 상태에서 `update_general`이 끝나면 새로 추가된 월까지 자동으로 다시 그립니다.
 
 `2번 버튼`은 같은 방식으로 월별 KOSPI를 좌축에, OECD 한국 선행지수를 우축에 표시합니다. Graph 2가 열린 상태에서 `update_general`이 끝나면 현재 통합문서의 최신 월까지 자동 갱신합니다.
@@ -47,6 +51,14 @@ Finder에서 `run_econo_ui.command`를 더블클릭하거나 터미널에서 다
 Graph 6의 최근 10년·5년은 같은 원칙을 연 단위로 적용하여 프로그램 실행연도를 포함한 최근 10개년·5개년 범위를 사용합니다. 해당 범위에 발표된 연간 자료가 더 적으면 존재하는 연도만 오류 없이 표시합니다.
 
 ## 실행
+
+UI 없이 최신 수출입 동향만 갱신하려면 다음을 실행합니다.
+
+```bash
+.venv/bin/python motir_export_report.py --json
+```
+
+분석 JSON은 `Export_trend/parsed/YYYY-MM.json`, 누적 이력은 `Export_trend/export_history.json`, 다운로드 기록은 `Export_trend/manifest.json`에 저장됩니다. 이 폴더는 공식 사이트에서 다시 생성 가능한 로컬 다운로드 자료이므로 Git에는 포함하지 않습니다.
 
 2026년 3월 단월 검증:
 
