@@ -28,11 +28,13 @@ CURRENT_GDP_ESTIMATE_SCRIPT = ROOT / "estimate_current_gdp.py"
 KOSPI_GDP_MODEL_SCRIPT = ROOT / "predict_kospi_from_gdp.py"
 HP_EXPORT_KOSPI_SCRIPT = ROOT / "hp_export_kospi.py"
 MOTIR_EXPORT_REPORT_SCRIPT = ROOT / "motir_export_report.py"
+TEMP_EXPORT_UPDATE_SCRIPT = ROOT / "temp_export_updater.py"
 EXPORT_TREND_DIR = ROOT / "Export_trend"
 EXPORT_HISTORY_FILE = EXPORT_TREND_DIR / "export_history.json"
 GENERAL_WORKBOOK = ROOT / "data" / "0_general.xlsx"
 ECONOMIC_STATE_WORKBOOK = ROOT / "data" / "1.economic_state.xlsx"
 GDP_WORKBOOK = ROOT / "data" / "2.GDP.xlsx"
+TEMP_EXPORT_WORKBOOK = ROOT / "data" / "3.temp_export.xlsx"
 
 COLORS = {
     "window": "#16182B",
@@ -73,6 +75,33 @@ GDP_SOURCES = [
     ("KOSPI 연말", "네이버 증권", "해당 연도 마지막 거래일 KOSPI 종가", "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI"),
     ("국고채 10년", "한국은행 ECOS", "817Y002 / 010210000, 12월 일별 금리 평균", "https://ecos.bok.or.kr/"),
     ("적정 KOSPI·평가율", "GDP 모델", "기존 ln(GDP)-ln(KOSPI) 모형과 통합문서 수식", "https://www.index.go.kr/unity/potal/eNara/sub/showStblGams3.do?freq=Y&idx_cd=F0131&period=N&stts_cd=F013101"),
+]
+
+TEMP_EXPORT_SOURCES = [
+    (
+        "1~10일 일평균 수출",
+        "관세청",
+        "월별 1일~10일 수출입 현황 [잠정치] 공식 PDF",
+        "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362",
+    ),
+    (
+        "1~20일 일평균 수출",
+        "관세청",
+        "월별 1일~20일 수출입 현황 [잠정치] 공식 PDF",
+        "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362",
+    ),
+    (
+        "월 최종 일평균 수출",
+        "산업통상자원부",
+        "data/0_general.xlsx에 저장된 월별 수출입 동향 확정치",
+        "https://www.nlic.go.kr/nlic/logpolLi.action",
+    ),
+    (
+        "잠정치 누적 통합문서",
+        "Econo Chart",
+        "data/3.temp_export.xlsx · 빈 값과 최신 월만 재확인",
+        "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362",
+    ),
 ]
 
 
@@ -142,6 +171,10 @@ class EconoUpdaterApp(tk.Tk):
         self.export_report_running = False
         self.export_chart_canvas = None
         self.export_chart_figure = None
+        self.temp_export_running = False
+        self.temp_export_range_months: int | None = None
+        self.temp_export_chart_canvas = None
+        self.temp_export_chart_figure = None
         self.events: queue.Queue[tuple[str, str | int]] = queue.Queue()
         self._configure_styles()
         self._build_ui()
@@ -226,6 +259,15 @@ class EconoUpdaterApp(tk.Tk):
             "#214B69",
         )
         self.export_tab_button.pack(side="left", padx=(6, 0))
+        self.temp_export_tab_button = self._button(
+            self.tab_bar,
+            "Temp Export Trend",
+            lambda: self._show_tab("temp_export"),
+            "#17334A",
+            COLORS["text"],
+            "#214B69",
+        )
+        self.temp_export_tab_button.pack(side="left", padx=(6, 0))
 
         self.toolbar_host = tk.Frame(self, bg=COLORS["toolbar"])
         self.toolbar_host.pack(fill="x")
@@ -367,6 +409,51 @@ class EconoUpdaterApp(tk.Tk):
         )
         self.export_stop_button.configure(state="disabled")
         self.export_stop_button.pack(side="right")
+
+        self.temp_export_toolbar = tk.Frame(
+            self.toolbar_host, bg=COLORS["toolbar"], padx=16, pady=14
+        )
+        self.temp_export_update_button = self._button(
+            self.temp_export_toolbar,
+            "▶ update",
+            self.run_temp_export_update,
+            COLORS["accent"],
+            "#071B18",
+            COLORS["accent_hover"],
+        )
+        self.temp_export_update_button.pack(side="left", padx=(0, 8))
+        self.temp_export_graph_button = self._button(
+            self.temp_export_toolbar,
+            "Graph",
+            self.show_temp_export_graph,
+            COLORS["blue"],
+            COLORS["text"],
+            COLORS["blue_hover"],
+        )
+        self.temp_export_graph_button.pack(side="left", padx=(0, 16))
+        self.temp_export_range_buttons: dict[int | None, ColorButton] = {}
+        for label, months in (("전체", None), ("최근 6개월", 6)):
+            button = self._button(
+                self.temp_export_toolbar,
+                label,
+                lambda selected=months: self._set_temp_export_range(selected),
+                COLORS["blue"],
+                COLORS["text"],
+                COLORS["blue_hover"],
+            )
+            button.pack(side="left", padx=(0, 8))
+            self.temp_export_range_buttons[months] = button
+        self.temp_export_stop_button = self._button(
+            self.temp_export_toolbar,
+            "■ Stop",
+            self.stop_update,
+            "#07507D",
+            COLORS["muted"],
+            "#0A608F",
+        )
+        self.temp_export_stop_button.configure(state="disabled")
+        self.temp_export_stop_button.pack(side="right")
+        self._update_temp_export_range_styles()
 
         progress_frame = tk.Frame(self, bg=COLORS["toolbar"], padx=16)
         self.progress_frame = progress_frame
@@ -533,6 +620,38 @@ class EconoUpdaterApp(tk.Tk):
         self.export_chart_container = tk.Frame(self.export_content, bg="#FFFFFF")
         self.export_chart_container.pack(fill="both", expand=True, padx=14, pady=(0, 14))
 
+        self.temp_export_content = tk.Frame(
+            self,
+            bg=COLORS["panel"],
+            highlightbackground=COLORS["border"],
+            highlightthickness=1,
+            bd=0,
+        )
+        temp_export_header = tk.Frame(
+            self.temp_export_content, bg=COLORS["panel"], padx=16, pady=12
+        )
+        temp_export_header.pack(fill="x")
+        self.temp_export_title_label = tk.Label(
+            temp_export_header,
+            text="Temp Export Trend · 관세청 잠정 일평균 수출액",
+            bg=COLORS["panel"],
+            fg=COLORS["accent"],
+            font=("Apple SD Gothic Neo", 18, "bold"),
+            anchor="w",
+        )
+        self.temp_export_title_label.pack(fill="x")
+        self.temp_export_subtitle_label = tk.Label(
+            temp_export_header,
+            text="1~10일·1~20일 잠정치와 월 최종 일평균 수출액을 비교합니다.",
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            font=("Apple SD Gothic Neo", 11),
+            anchor="w",
+        )
+        self.temp_export_subtitle_label.pack(fill="x", pady=(3, 0))
+        self.temp_export_chart_container = tk.Frame(self.temp_export_content, bg="#FFFFFF")
+        self.temp_export_chart_container.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+
         left = self._panel(content)
         right = self._panel(content)
         content.add(left, minsize=470, stretch="always", width=700)
@@ -612,26 +731,43 @@ class EconoUpdaterApp(tk.Tk):
         if tab_name == "graph":
             self.update_toolbar.pack_forget()
             self.export_toolbar.pack_forget()
+            self.temp_export_toolbar.pack_forget()
             self.graph_toolbar.pack(fill="x")
             self.progress_frame.pack_forget()
             self.content.pack_forget()
             self.export_content.pack_forget()
+            self.temp_export_content.pack_forget()
             self.graph_content.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         elif tab_name == "export":
             self.update_toolbar.pack_forget()
             self.graph_toolbar.pack_forget()
+            self.temp_export_toolbar.pack_forget()
             self.export_toolbar.pack(fill="x")
             self.progress_frame.pack_forget()
             self.content.pack_forget()
             self.graph_content.pack_forget()
+            self.temp_export_content.pack_forget()
             self.export_content.pack(fill="both", expand=True, padx=16, pady=(0, 16))
             self.show_export_summary()
+        elif tab_name == "temp_export":
+            self.update_toolbar.pack_forget()
+            self.graph_toolbar.pack_forget()
+            self.export_toolbar.pack_forget()
+            self.temp_export_toolbar.pack(fill="x")
+            self.progress_frame.pack_forget()
+            self.content.pack_forget()
+            self.graph_content.pack_forget()
+            self.export_content.pack_forget()
+            self.temp_export_content.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+            self.plot_temp_export_graph()
         else:
             self.graph_toolbar.pack_forget()
             self.export_toolbar.pack_forget()
+            self.temp_export_toolbar.pack_forget()
             self.update_toolbar.pack(fill="x")
             self.graph_content.pack_forget()
             self.export_content.pack_forget()
+            self.temp_export_content.pack_forget()
             self.content.pack(fill="both", expand=True, padx=16, pady=(0, 16))
             self.progress_frame.pack(
                 fill="x", pady=(0, 12), before=self.content
@@ -641,6 +777,7 @@ class EconoUpdaterApp(tk.Tk):
             ("update", self.update_tab_button),
             ("graph", self.graph_tab_button),
             ("export", self.export_tab_button),
+            ("temp_export", self.temp_export_tab_button),
         ):
             selected = name == tab_name
             button.normal_background = COLORS["accent"] if selected else "#17334A"
@@ -1663,7 +1800,16 @@ class EconoUpdaterApp(tk.Tk):
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _show_sources(self, update_name: str) -> None:
-        if update_name == "update_gdp":
+        if update_name == "temp_export":
+            self.current_sources = TEMP_EXPORT_SOURCES
+            self.source_title_label.configure(text="자료 출처 · Temp Export Trend")
+            self.source_subtitle_label.configure(
+                text="관세청 잠정치와 월 최종 일평균 수출액 · 행을 더블클릭하면 제공처를 엽니다"
+            )
+            self.source_note.configure(
+                text="※ 완성된 과거 월은 건너뛰고, 빈 값·새 월·실행일의 최신 월만 다시 확인합니다."
+            )
+        elif update_name == "update_gdp":
             self.current_sources = GDP_SOURCES
             self.source_title_label.configure(text="자료 출처 · update_gdp")
             self.source_subtitle_label.configure(
@@ -2032,6 +2178,209 @@ class EconoUpdaterApp(tk.Tk):
             self._append_log(f"{title} 표시 실패: {exc}", "error")
             messagebox.showerror("분석 표시 실패", str(exc))
 
+    def _clear_temp_export_display(self) -> None:
+        for child in self.temp_export_chart_container.winfo_children():
+            child.destroy()
+        if self.temp_export_chart_figure is not None:
+            try:
+                import matplotlib.pyplot as plt
+
+                plt.close(self.temp_export_chart_figure)
+            except Exception:
+                pass
+        self.temp_export_chart_canvas = None
+        self.temp_export_chart_figure = None
+
+    def _set_temp_export_range(self, months: int | None) -> None:
+        self.temp_export_range_months = months
+        self._update_temp_export_range_styles()
+        self.show_temp_export_graph()
+
+    def show_temp_export_graph(self) -> None:
+        self.progress_frame.pack_forget()
+        self.content.pack_forget()
+        self.temp_export_content.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.plot_temp_export_graph()
+
+    def _show_temp_export_update_view(self) -> None:
+        self.temp_export_content.pack_forget()
+        self._show_sources("temp_export")
+        self.progress_frame.pack(fill="x", pady=(0, 12))
+        self.content.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+
+    def _update_temp_export_range_styles(self) -> None:
+        for months, button in self.temp_export_range_buttons.items():
+            selected = months == self.temp_export_range_months
+            normal = COLORS["accent"] if selected else COLORS["blue"]
+            active = COLORS["accent_hover"] if selected else COLORS["blue_hover"]
+            button.normal_background = normal
+            button.active_background = active
+            button.configure(bg=normal, fg="#071B18" if selected else COLORS["text"])
+
+    def run_temp_export_update(self) -> None:
+        if self.process and self.process.poll() is None:
+            messagebox.showwarning("작업 실행 중", "현재 실행 중인 작업을 먼저 종료하세요.")
+            return
+        self._show_temp_export_update_view()
+        self.temp_export_running = True
+        self.temp_export_update_button.configure(state="disabled")
+        self.temp_export_stop_button.configure(state="normal")
+        self.temp_export_subtitle_label.configure(
+            text="관세청에서 실행일까지 발표된 1~10일·1~20일 잠정치를 확인하고 있습니다."
+        )
+        self._set_progress(0, "최신 잠정자료 확인 중")
+        self._append_log("temp_export 업데이트 시작", "info")
+        threading.Thread(target=self._temp_export_worker, daemon=True).start()
+
+    def _temp_export_worker(self) -> None:
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        result_json = ""
+        try:
+            self.process = subprocess.Popen(
+                [sys.executable, "-u", str(TEMP_EXPORT_UPDATE_SCRIPT), "--json"],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+            assert self.process.stdout is not None
+            for raw_line in self.process.stdout:
+                line = raw_line.rstrip()
+                if line.startswith("RESULT_JSON "):
+                    result_json = line.removeprefix("RESULT_JSON ")
+                else:
+                    self.events.put(("temp_export_line", line))
+            code = self.process.wait()
+            if code == 0:
+                self.events.put(("temp_export_done", result_json or "{}"))
+            else:
+                self.events.put(("temp_export_error", f"종료 코드 {code}"))
+        except Exception as exc:
+            self.events.put(("temp_export_error", str(exc)))
+
+    def plot_temp_export_graph(self) -> None:
+        try:
+            import matplotlib as mpl
+            from matplotlib import dates as mdates
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+            from openpyxl import load_workbook
+
+            mpl.rcParams["font.family"] = "Apple SD Gothic Neo"
+            mpl.rcParams["axes.unicode_minus"] = False
+            if not TEMP_EXPORT_WORKBOOK.exists():
+                raise FileNotFoundError(f"통합문서를 찾지 못했습니다: {TEMP_EXPORT_WORKBOOK}")
+            workbook = load_workbook(TEMP_EXPORT_WORKBOOK, read_only=True, data_only=True)
+            sheet = workbook["Data"] if "Data" in workbook.sheetnames else workbook.active
+            observations: list[tuple[datetime, float | None, float | None, float | None]] = []
+            for month, days_10, days_20, final in sheet.iter_rows(
+                min_row=2, min_col=1, max_col=4, values_only=True
+            ):
+                if isinstance(month, datetime):
+                    parsed_month = datetime(month.year, month.month, 1)
+                elif isinstance(month, str) and re.match(r"\d{4}-\d{2}", month):
+                    parsed_month = datetime.strptime(month[:7], "%Y-%m")
+                else:
+                    continue
+                observations.append(
+                    (
+                        parsed_month,
+                        float(days_10) if isinstance(days_10, (int, float)) else None,
+                        float(days_20) if isinstance(days_20, (int, float)) else None,
+                        float(final) if isinstance(final, (int, float)) else None,
+                    )
+                )
+            workbook.close()
+            observations.sort(key=lambda row: row[0])
+            if self.temp_export_range_months is not None:
+                now = datetime.now()
+                end_index = now.year * 12 + now.month - 1
+                start_index = end_index - self.temp_export_range_months + 1
+                observations = [
+                    row
+                    for row in observations
+                    if row[0].year * 12 + row[0].month - 1 >= start_index
+                ]
+            if not observations:
+                raise ValueError("선택한 기간에 잠정 수출 데이터가 없습니다.")
+
+            self._clear_temp_export_display()
+            figure = Figure(figsize=(12.5, 6.7), dpi=100, facecolor="#FFFFFF")
+            axis = figure.add_subplot(111)
+            dates = [row[0] for row in observations]
+            series = (
+                ("1~10일 잠정", [row[1] for row in observations], "#2563EB", "o", "-"),
+                ("1~20일 잠정", [row[2] for row in observations], "#EA580C", "s", "--"),
+                ("월 최종", [row[3] for row in observations], "#0F766E", "D", "-"),
+            )
+            for label, values, color, marker, line_style in series:
+                axis.plot(
+                    dates,
+                    values,
+                    label=label,
+                    color=color,
+                    marker=marker,
+                    linestyle=line_style,
+                    linewidth=2.4,
+                    markersize=6,
+                )
+            axis.set_ylabel("일평균 수출액(억 달러)")
+            plotted_values = [
+                value
+                for _, values, _, _, _ in series
+                for value in values
+                if isinstance(value, (int, float))
+            ]
+            if plotted_values:
+                y_max = max(5.0, ceil(max(plotted_values) * 1.10 / 5.0) * 5.0)
+                axis.set_ylim(0, y_max)
+                axis.set_yticks(range(0, int(y_max) + 1, 5))
+            else:
+                axis.set_ylim(bottom=0)
+            axis.grid(axis="y", color="#D1D5DB", linewidth=0.8)
+            axis.grid(axis="x", visible=False)
+            axis.spines[["top", "right"]].set_visible(False)
+            axis.spines[["left", "bottom"]].set_color("#CBD5E1")
+            axis.xaxis.set_major_locator(mdates.MonthLocator(interval=max(1, len(dates) // 10)))
+            axis.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+            axis.tick_params(axis="x", rotation=45)
+            axis.set_xlim(dates[0], dates[-1])
+            axis.legend(loc="upper left", ncol=3, frameon=False)
+            figure.suptitle(
+                "관세청 잠정치와 월 최종 일평균 수출액 비교",
+                fontsize=16,
+                fontweight="bold",
+                color="#1F2937",
+                y=0.98,
+            )
+            axis.set_title(
+                "1~10일·1~20일: 관세청 잠정치 / 월 최종: 산업통상부 월간 수출입 동향",
+                fontsize=10,
+                color="#64748B",
+                pad=12,
+            )
+            figure.subplots_adjust(left=0.08, right=0.97, top=0.84, bottom=0.17)
+            self.temp_export_chart_figure = figure
+            self.temp_export_chart_canvas = FigureCanvasTkAgg(
+                figure, master=self.temp_export_chart_container
+            )
+            self.temp_export_chart_canvas.draw()
+            self.temp_export_chart_canvas.get_tk_widget().pack(fill="both", expand=True)
+            period_label = "전체" if self.temp_export_range_months is None else "최근 6개월"
+            self.temp_export_title_label.configure(
+                text="Temp Export Trend · 잠정·최종 일평균 수출액"
+            )
+            self.temp_export_subtitle_label.configure(
+                text=f"{dates[0]:%Y-%m}~{dates[-1]:%Y-%m} · {len(dates)}개월 · {period_label} · 단위: 억 달러"
+            )
+            self._append_log(f"Temp Export Trend 그래프 생성 완료: {len(dates)}개월", "success")
+        except Exception as exc:
+            self._append_log(f"Temp Export Trend 그래프 실패: {exc}", "error")
+            messagebox.showerror("잠정 수출 그래프 실패", str(exc))
+
     def _set_progress(self, percent: float, label: str) -> None:
         value = max(0.0, min(100.0, percent))
         self.progress_bar.configure(value=value)
@@ -2198,6 +2547,35 @@ class EconoUpdaterApp(tk.Tk):
                     self.export_subtitle_label.configure(text="다운로드에 실패했습니다. 실행 로그를 확인하세요.")
                     self._export_message(f"다운로드 실패\n{payload}", color="#B91C1C")
                     messagebox.showerror("수출입 동향 다운로드 실패", str(payload))
+                elif kind == "temp_export_line":
+                    line = str(payload)
+                    if line.startswith("FAILED"):
+                        tag = "error"
+                    elif line.startswith(("SAVED", "UPDATED")):
+                        tag = "success"
+                    elif line.startswith("PENDING"):
+                        tag = "warning"
+                    else:
+                        tag = "info"
+                    self._append_log(line, tag)
+                    self.temp_export_subtitle_label.configure(text=line)
+                elif kind == "temp_export_done":
+                    self.process = None
+                    self.temp_export_running = False
+                    self.temp_export_update_button.configure(state="normal")
+                    self.temp_export_stop_button.configure(state="disabled")
+                    self._append_log("temp_export 업데이트 완료", "success")
+                    self._set_progress(100, "업데이트 완료")
+                elif kind == "temp_export_error":
+                    self.process = None
+                    self.temp_export_running = False
+                    self.temp_export_update_button.configure(state="normal")
+                    self.temp_export_stop_button.configure(state="disabled")
+                    self._append_log(f"temp_export 업데이트 실패: {payload}", "error")
+                    self.temp_export_subtitle_label.configure(
+                        text="업데이트에 실패했습니다. 실행 로그를 확인하세요."
+                    )
+                    messagebox.showerror("잠정 수출 업데이트 실패", str(payload))
         except queue.Empty:
             pass
         self.after(100, self._drain_events)
@@ -2256,9 +2634,11 @@ def self_check() -> int:
         KOSPI_GDP_MODEL_SCRIPT,
         HP_EXPORT_KOSPI_SCRIPT,
         MOTIR_EXPORT_REPORT_SCRIPT,
+        TEMP_EXPORT_UPDATE_SCRIPT,
         GENERAL_WORKBOOK,
         ECONOMIC_STATE_WORKBOOK,
         GDP_WORKBOOK,
+        TEMP_EXPORT_WORKBOOK,
     )
     missing = [str(path) for path in required if not path.exists()]
     if missing:
@@ -2271,7 +2651,7 @@ def self_check() -> int:
         )
         return 1
     print(
-        "UI_CHECK_OK workbooks=3 scripts=8 sources=general:7,economic:4,gdp:4 "
+        "UI_CHECK_OK workbooks=4 scripts=9 sources=general:7,economic:4,gdp:4 "
         f"python={sys.executable}"
     )
     return 0

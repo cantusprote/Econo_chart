@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import calendar
 import copy
+import csv
 import html
 import io
 import json
@@ -233,10 +234,14 @@ def fetch_inventory_ratio(month: YearMonth) -> tuple[float, str]:
 
 
 def fetch_oecd_cli(month: YearMonth) -> tuple[float, str]:
+    start_month = month
+    for _ in range(11):
+        start_month = start_month.previous()
     url = (
         "https://sdmx.oecd.org/public/rest/data/"
-        "OECD.SDD.STES,DSD_STES@DF_CLI,4.1/KOR.M.LI...AA...H"
-        f"?startPeriod={month}&endPeriod={month}&dimensionAtObservation=AllDimensions"
+        "OECD.SDD.STES,DSD_STES@DF_CLI/KOR.M.LI...AA...H"
+        f"?startPeriod={start_month}&endPeriod={month}"
+        "&dimensionAtObservation=AllDimensions"
     )
     request = urllib.request.Request(
         url, headers={"User-Agent": USER_AGENT, "Accept": "text/csv"}
@@ -244,14 +249,21 @@ def fetch_oecd_cli(month: YearMonth) -> tuple[float, str]:
     try:
         with urllib.request.urlopen(request, timeout=40) as response:
             body = response.read().decode("utf-8-sig")
-    except urllib.error.URLError as exc:
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise UpdateError(f"OECD에 {month} 한국 CLI가 아직 발표되지 않았습니다.") from exc
+        raise UpdateError(f"OECD API 조회 실패: HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
         raise UpdateError(f"OECD API 조회 실패: {exc}") from exc
-    lines = [line for line in body.splitlines() if line.strip()]
-    if len(lines) < 2:
-        raise UpdateError(f"OECD API에 {month} 한국 CLI가 없습니다.")
-    headers = lines[0].split(",")
-    values = lines[1].split(",")
-    return float(values[headers.index("OBS_VALUE")]), url
+    rows = list(csv.DictReader(io.StringIO(body)))
+    target = next((row for row in rows if row.get("TIME_PERIOD") == str(month)), None)
+    if target and target.get("OBS_VALUE") not in (None, ""):
+        return float(target["OBS_VALUE"]), url
+    available = sorted(row["TIME_PERIOD"] for row in rows if row.get("TIME_PERIOD"))
+    latest = available[-1] if available else "확인 불가"
+    raise UpdateError(
+        f"OECD에 {month} 한국 CLI가 아직 발표되지 않았습니다. 최신 발표월: {latest}"
+    )
 
 
 def fetch_daily_average_exports(month: YearMonth) -> tuple[float, str]:
