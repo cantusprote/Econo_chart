@@ -31,6 +31,7 @@ MOTIR_EXPORT_REPORT_SCRIPT = ROOT / "motir_export_report.py"
 TEMP_EXPORT_UPDATE_SCRIPT = ROOT / "temp_export_updater.py"
 EXPORT_TREND_DIR = ROOT / "Export_trend"
 EXPORT_HISTORY_FILE = EXPORT_TREND_DIR / "export_history.json"
+TEMP_EXPORT_HISTORY_FILE = ROOT / "Temp_Export_trend" / "temp_export_history.json"
 GENERAL_WORKBOOK = ROOT / "data" / "0_general.xlsx"
 ECONOMIC_STATE_WORKBOOK = ROOT / "data" / "1.economic_state.xlsx"
 GDP_WORKBOOK = ROOT / "data" / "2.GDP.xlsx"
@@ -422,6 +423,15 @@ class EconoUpdaterApp(tk.Tk):
             COLORS["accent_hover"],
         )
         self.temp_export_update_button.pack(side="left", padx=(0, 8))
+        self.open_temp_export_pdf_button = self._button(
+            self.temp_export_toolbar,
+            "PDF 열기",
+            self.open_latest_temp_export_pdf,
+            "#7B4BB7",
+            COLORS["text"],
+            "#9060CC",
+        )
+        self.open_temp_export_pdf_button.pack(side="left", padx=(0, 8))
         self.temp_export_graph_button = self._button(
             self.temp_export_toolbar,
             "Graph",
@@ -2190,6 +2200,47 @@ class EconoUpdaterApp(tk.Tk):
                 pass
         self.temp_export_chart_canvas = None
         self.temp_export_chart_figure = None
+
+    def _latest_temp_export_pdf(self) -> Path | None:
+        if TEMP_EXPORT_HISTORY_FILE.exists():
+            try:
+                payload = json.loads(TEMP_EXPORT_HISTORY_FILE.read_text(encoding="utf-8"))
+                observations = payload.get("observations", {})
+                if isinstance(observations, dict):
+                    for month in sorted(observations, reverse=True):
+                        entry = observations.get(month, {})
+                        if not isinstance(entry, dict):
+                            continue
+                        for field in ("days_20", "days_10"):
+                            period = entry.get(field, {})
+                            local_pdf = period.get("local_pdf") if isinstance(period, dict) else None
+                            if local_pdf:
+                                pdf_path = Path(local_pdf).expanduser()
+                                if pdf_path.is_file():
+                                    return pdf_path.resolve()
+            except (OSError, json.JSONDecodeError):
+                pass
+        candidates = sorted(
+            (ROOT / "Temp_Export_trend").glob("*_잠정수출입.pdf"),
+            key=lambda path: (path.name, path.stat().st_mtime),
+            reverse=True,
+        )
+        return candidates[0].resolve() if candidates else None
+
+    def open_latest_temp_export_pdf(self) -> None:
+        pdf_path = self._latest_temp_export_pdf()
+        if pdf_path is None:
+            messagebox.showinfo(
+                "PDF 없음",
+                "다운로드된 관세청 잠정 수출입 PDF가 없습니다. update를 먼저 실행하세요.",
+            )
+            return
+        try:
+            subprocess.Popen(["open", str(pdf_path)])
+            self._append_log(f"관세청 최신 잠정자료 PDF 열기: {pdf_path.name}", "success")
+        except OSError as exc:
+            self._append_log(f"관세청 PDF 열기 실패: {exc}", "error")
+            messagebox.showerror("PDF 열기 실패", str(exc))
 
     def _set_temp_export_range(self, months: int | None) -> None:
         self.temp_export_range_months = months
