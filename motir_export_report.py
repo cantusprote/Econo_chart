@@ -96,24 +96,27 @@ def report_month_from_title(title: str) -> str | None:
 
 def discover_candidate_ids(opener: urllib.request.OpenerDirector) -> list[tuple[str, str]]:
     found: dict[str, str] = {}
-    for page in range(1, 4):
-        query = urllib.parse.urlencode(
-            {
-                "pageIndex": page,
-                "searchCondition": 1,
-                "searchKeyword": "수출입 동향",
-            }
-        )
-        body = decode_html(request_bytes(opener, f"{BASE_URL}{BOARD_PATH}?{query}"))
-        pattern = re.compile(
-            r"article\.view\(['\"](?P<id>\d+)['\"]\).*?<i>(?P<title>.*?)</i>", re.S
-        )
-        for match in pattern.finditer(body):
-            title = normalized_text(match.group("title"))
-            if report_month_from_title(title):
-                found[match.group("id")] = title
-        if found:
-            break
+    pattern = re.compile(
+        r"article\.view\(['\"](?P<id>\d+)['\"]\).*?<i>(?P<title>.*?)</i>", re.S
+    )
+    for keyword in ("수출입 동향", "수출입동향"):
+        keyword_found = False
+        for page in range(1, 4):
+            query = urllib.parse.urlencode(
+                {
+                    "pageIndex": page,
+                    "searchCondition": 1,
+                    "searchKeyword": keyword,
+                }
+            )
+            body = decode_html(request_bytes(opener, f"{BASE_URL}{BOARD_PATH}?{query}"))
+            for match in pattern.finditer(body):
+                title = normalized_text(match.group("title"))
+                if report_month_from_title(title):
+                    found[match.group("id")] = title
+                    keyword_found = True
+            if keyword_found:
+                break
     if not found:
         raise ExportReportError("산업통상부에서 월별 수출입 동향 게시물을 찾지 못했습니다.")
     return list(found.items())

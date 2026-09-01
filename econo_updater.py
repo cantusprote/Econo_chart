@@ -279,7 +279,31 @@ def fetch_daily_average_exports(month: YearMonth) -> tuple[float, str]:
         rf"fn_viewDetail\('(\d+)'\);\">\s*{re.escape(title)}\s*</a>", body
     )
     if not match:
-        raise UpdateError(f"국가물류통합정보센터에서 {title}을 찾지 못했습니다.")
+        # NLIC can lag the ministry release, and ministry titles alternate
+        # between "수출입 동향" and "수출입동향".  Fall back to the current
+        # ministry board search shared with the Export Trend downloader.
+        from motir_export_report import (
+            build_opener,
+            discover_candidate_ids,
+            parse_article,
+            parse_report,
+            request_bytes,
+        )
+
+        opener = build_opener()
+        for article_id, _ in discover_candidate_ids(opener):
+            article = parse_article(opener, article_id)
+            if article.report_month != str(month):
+                continue
+            request_bytes(opener, article.post_url)
+            payload = request_bytes(opener, article.pdf_url, referer=article.post_url)
+            report = parse_report(article, payload)
+            value = report.get("summary", {}).get("daily_average_exports_100m_usd")
+            if isinstance(value, (int, float)):
+                return float(value), article.post_url
+        raise UpdateError(
+            f"국가물류통합정보센터와 산업통상부에서 {title}을 찾지 못했습니다."
+        )
     view_url = (
         "https://www.nlic.go.kr/nlic/logpolDt.action?command=VIEW"
         f"&fldLogpolRefSeq={match.group(1)}"
@@ -493,6 +517,40 @@ def workbook_months_needing_update(input_path: Path, through: YearMonth) -> list
             candidates.append(month)
     workbook.close()
     return sorted(candidates)
+
+
+def ensure_workbook_months(input_path: Path, through: YearMonth) -> None:
+    """Append styled blank rows when the workbook ends before ``through``."""
+    workbook = load_workbook(input_path, read_only=False, data_only=False)
+    sheet = workbook["Sheet1"]
+    dated_rows = [
+        (row, month_from_cell(sheet.cell(row, 1).value))
+        for row in range(2, sheet.max_row + 1)
+    ]
+    dated_rows = [(row, month) for row, month in dated_rows if month is not None]
+    if not dated_rows:
+        workbook.close()
+        raise UpdateError("통합문서 A열에서 기준 월 행을 찾지 못했습니다.")
+
+    last_row, last_month = max(dated_rows, key=lambda item: item[1])
+    changed = False
+    while last_month < through:
+        next_month = last_month.next()
+        new_row = last_row + 1
+        for col in range(1, sheet.max_column + 1):
+            copy_cell_style(sheet.cell(last_row, col), sheet.cell(new_row, col))
+            sheet.cell(new_row, col).value = None
+        previous_date = sheet.cell(last_row, 1).value
+        day = previous_date.day if isinstance(previous_date, (date, datetime)) else 1
+        sheet.cell(new_row, 1).value = datetime(next_month.year, next_month.month, day)
+        if sheet.row_dimensions[last_row].height is not None:
+            sheet.row_dimensions[new_row].height = sheet.row_dimensions[last_row].height
+        last_row, last_month = new_row, next_month
+        changed = True
+
+    if changed:
+        workbook.save(input_path)
+    workbook.close()
 
 
 def workbook_missing_fields(input_path: Path, month: YearMonth) -> set[str]:

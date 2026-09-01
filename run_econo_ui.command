@@ -7,8 +7,8 @@ PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 
 cd "$PROJECT_DIR"
 
-if [[ ! -x "$PYTHON_BIN" ]]; then
-    print -u2 ".venv가 없습니다. 먼저 setup_venv.command를 실행합니다."
+if [[ ! -x "$PYTHON_BIN" ]] || ! "$PYTHON_BIN" -c 'import tkinter' >/dev/null 2>&1; then
+    print -u2 ".venv가 없거나 Tk를 사용할 수 없습니다. 환경을 구성합니다."
     "$PROJECT_DIR/setup_venv.command"
 fi
 

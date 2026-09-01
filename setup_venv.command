@@ -22,6 +22,12 @@ if ! "$BASE_PYTHON" -c 'import tkinter' >/dev/null 2>&1; then
     exit 1
 fi
 
+if [[ -x "$VENV_DIR/bin/python" ]] && ! "$VENV_DIR/bin/python" -c 'import tkinter' >/dev/null 2>&1; then
+    BROKEN_VENV="$SCRIPT_DIR/.venv.broken.$(date +%Y%m%d-%H%M%S)"
+    print -u2 "기존 .venv에 tkinter가 없어 백업 후 다시 만듭니다: $BROKEN_VENV"
+    mv "$VENV_DIR" "$BROKEN_VENV"
+fi
+
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
     "$BASE_PYTHON" -m venv "$VENV_DIR"
 fi

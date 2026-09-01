@@ -11,6 +11,7 @@ from econo_updater import (
     GENERAL_FIELD_LABELS,
     YearMonth,
     collect_month_partial,
+    ensure_workbook_months,
     previous_complete_month,
     update_workbook,
     workbook_missing_fields,
@@ -52,6 +53,7 @@ def main() -> None:
         shutil.copy2(seed_path, workbook_path)
         print(f"INITIALIZED {workbook_path}")
 
+    ensure_workbook_months(workbook_path, args.through)
     months = workbook_months_needing_update(workbook_path, args.through)
     if not months:
         print(f"NO_UPDATE: {args.through}까지 빈 월이 없습니다.")

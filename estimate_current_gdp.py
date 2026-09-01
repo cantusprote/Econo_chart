@@ -129,8 +129,19 @@ def latest_bok_outlook(year: int) -> dict[str, str | float]:
         raise CurrentGDPError(f"한국은행 RSS에서 {year}년 경제전망을 찾지 못했습니다.")
     item = candidates[0]
     page = compact_text(http_get(item["url"]))
-    real_match = re.search(r"올해성장률전망,(-?\d+(?:\.\d+)?)%", page)
-    cpi_match = re.search(r"소비자물가.*?(-?\d+(?:\.\d+)?)%상승전망", page)
+    real_patterns = (
+        r"올해성장률전망[,，:]?(-?\d+(?:\.\d+)?)%",
+        r"국내경제는올해(-?\d+(?:\.\d+)?)%",
+        r"올해경제성장률(?:은|을)?(-?\d+(?:\.\d+)?)%",
+        r"올해성장률(?:은|을)?(-?\d+(?:\.\d+)?)%",
+    )
+    cpi_patterns = (
+        r"소비자물가는올해(-?\d+(?:\.\d+)?)%",
+        r"소비자물가상승률(?:은|을)?올해(-?\d+(?:\.\d+)?)%",
+        r"소비자물가.{0,80}?(-?\d+(?:\.\d+)?)%상승전망",
+    )
+    real_match = next((match for pattern in real_patterns if (match := re.search(pattern, page))), None)
+    cpi_match = next((match for pattern in cpi_patterns if (match := re.search(pattern, page))), None)
     if not real_match or not cpi_match:
         raise CurrentGDPError("한국은행 경제전망에서 성장률 또는 물가 전망을 읽지 못했습니다.")
     return {
