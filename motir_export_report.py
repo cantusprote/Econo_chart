@@ -141,10 +141,13 @@ def parse_article(opener: urllib.request.OpenerDirector, article_id: str) -> Art
 
     department = detail("담당부서")
     published = detail("등록일")
-    # The site's href contains nested single quotes, so pair paths with the
-    # following visible filename instead of treating it as a normal URL.
+    # MOTIR has used both normal hrefs and javascript:location.href wrappers
+    # for attachment downloads. Keep both patterns so a site-template change
+    # does not break monthly updates again.
     attachments = re.findall(
-        r"javascript:location\.href='(?P<path>/attach/down/[^']+)'[^>]*>(?P<name>.*?)</a>",
+        r"<a\s+[^>]*href=[\"'](?:javascript:location\.href=[\"'])?"
+        r"(?P<path>/attach/down/[^\"']+)(?:[\"'])?[^>]*>"
+        r"(?P<name>.*?)</a>",
         body,
         re.S | re.I,
     )
