@@ -138,14 +138,17 @@ def discover_articles(start: YearMonth, end: YearMonth) -> dict[tuple[str, int],
     )
     found: dict[tuple[str, int], Article] = {}
     for match in pattern.finditer(body):
-        title = clean_html(match.group("title"))
+        attrs = match.group("attrs")
+        # Newly published posts include a visible "새글" badge inside the
+        # anchor.  The title attribute contains the stable, badge-free title.
+        title_match = re.search(r'title="([^"]+)"', attrs, re.I)
+        title = clean_html(title_match.group(1) if title_match else match.group("title"))
         parsed = parse_title(title)
         if not parsed:
             continue
         month, period_days = parsed
         if not start <= month <= end:
             continue
-        attrs = match.group("attrs")
         id_match = re.search(r'data-id="(\d+)"', attrs)
         token_match = re.search(r'data-url="([^"]+)"', attrs)
         if not id_match or not token_match:
