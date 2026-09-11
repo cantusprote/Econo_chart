@@ -220,6 +220,98 @@ def parse_daily_average(article: Article, payload: bytes) -> tuple[float, float 
     return values[-1], working_days, compact[:1200]
 
 
+def parse_major_export_products(payload: bytes) -> list[dict]:
+    """Extract the export side of the appendix's major-products table."""
+    reader = PdfReader(io.BytesIO(payload))
+    text = "\n".join(
+        page.extract_text(extraction_mode="layout") or "" for page in reader.pages
+    )
+    section_match = re.search(
+        r"□\s*주요품목(?P<section>.*?)□\s*주요국가",
+        text,
+        re.S,
+    )
+    if not section_match:
+        raise TempExportError("주요품목 수출 표를 찾지 못했습니다.")
+    row_pattern = re.compile(
+        r"^\s*(?P<name>[가-힣 ]{2,}?)\s+"
+        r"(?P<amount>\d{1,3}(?:,\d{3})*|\d+)\s*"
+        r"(?P<change>△?\d+\.\d)",
+        re.M,
+    )
+    products: list[dict] = []
+    for match in row_pattern.finditer(section_match.group("section")):
+        name = re.sub(r"\s+", "", match.group("name"))
+        change_text = match.group("change")
+        products.append(
+            {
+                "name": name,
+                "amount_million_usd": float(match.group("amount").replace(",", "")),
+                "yoy_pct": -float(change_text[1:]) if change_text.startswith("△") else float(change_text),
+            }
+        )
+    if not products:
+        raise TempExportError("주요품목 수출 수치를 찾지 못했습니다.")
+    return products
+
+
+def parse_major_export_countries(payload: bytes) -> list[dict]:
+    """Extract the export side of the appendix's major-countries table."""
+    reader = PdfReader(io.BytesIO(payload))
+    text = "\n".join(
+        page.extract_text(extraction_mode="layout") or "" for page in reader.pages
+    )
+    section_match = re.search(r"□\s*주요국가(?P<section>.*)", text, re.S)
+    if not section_match:
+        raise TempExportError("주요국가 수출 표를 찾지 못했습니다.")
+    row_pattern = re.compile(
+        r"^\s*(?P<name>[가-힣 ]{2,}?)\s+"
+        r"(?P<amount>\d{1,3}(?:,\d{3})*|\d+)\s*"
+        r"(?P<change>△?\d+\.\d)",
+        re.M,
+    )
+    countries: list[dict] = []
+    for match in row_pattern.finditer(section_match.group("section")):
+        name = re.sub(r"\s+", "", match.group("name"))
+        change_text = match.group("change")
+        countries.append(
+            {
+                "name": name,
+                "amount_million_usd": float(match.group("amount").replace(",", "")),
+                "yoy_pct": -float(change_text[1:]) if change_text.startswith("△") else float(change_text),
+            }
+        )
+    if not countries:
+        raise TempExportError("주요국가 수출 수치를 찾지 못했습니다.")
+    return countries[:10]
+
+
+def backfill_local_breakdown_history(history: dict) -> int:
+    """Populate product and country rows for previously downloaded PDFs once."""
+    changed = 0
+    for entry in history.get("observations", {}).values():
+        if not isinstance(entry, dict):
+            continue
+        for field in ("days_10", "days_20"):
+            period = entry.get(field)
+            if not isinstance(period, dict):
+                continue
+            local_pdf = period.get("local_pdf")
+            if not local_pdf:
+                continue
+            pdf_path = Path(local_pdf).expanduser()
+            if not pdf_path.is_file():
+                continue
+            payload = pdf_path.read_bytes()
+            if not period.get("export_products"):
+                period["export_products"] = parse_major_export_products(payload)
+                changed += 1
+            if not period.get("export_countries"):
+                period["export_countries"] = parse_major_export_countries(payload)
+                changed += 1
+    return changed
+
+
 def monthly_final_values() -> dict[str, float]:
     if not GENERAL_WORKBOOK.exists():
         return {}
@@ -316,9 +408,13 @@ def collect(target_months: list[YearMonth]) -> dict:
             if not pdf_path.exists() or hashlib.sha256(pdf_path.read_bytes()).hexdigest() != digest:
                 pdf_path.write_bytes(payload)
             daily_average, working_days, _ = parse_daily_average(article, payload)
+            export_products = parse_major_export_products(payload)
+            export_countries = parse_major_export_countries(payload)
             month_entry[field] = {
                 "daily_average_exports_100m_usd": daily_average,
                 "working_days": working_days,
+                "export_products": export_products,
+                "export_countries": export_countries,
                 "title": article.title,
                 "published": article.published,
                 "post_url": BASE_URL + DETAIL_PATH,
@@ -328,6 +424,9 @@ def collect(target_months: list[YearMonth]) -> dict:
                 "sha256": digest,
             }
             print(f"SAVED {month_key} 1-{period_days}일: {daily_average:.1f}억 달러", flush=True)
+    backfilled = backfill_local_breakdown_history(history)
+    if backfilled:
+        print(f"BACKFILL 기존 PDF 품목·국가 {backfilled}건", flush=True)
     history["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     history["source"] = BASE_URL + LIST_PATH + "?mi=2891&bbsId=1362"
     save_json(HISTORY_PATH, history)

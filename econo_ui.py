@@ -174,6 +174,7 @@ class EconoUpdaterApp(tk.Tk):
         self.export_chart_figure = None
         self.temp_export_running = False
         self.temp_export_range_months: int | None = None
+        self.temp_export_chart_mode = "daily"
         self.temp_export_chart_canvas = None
         self.temp_export_chart_figure = None
         self.events: queue.Queue[tuple[str, str | int]] = queue.Queue()
@@ -441,6 +442,24 @@ class EconoUpdaterApp(tk.Tk):
             COLORS["blue_hover"],
         )
         self.temp_export_graph_button.pack(side="left", padx=(0, 16))
+        self.temp_export_products_button = self._button(
+            self.temp_export_toolbar,
+            "주요품목",
+            self.show_temp_export_products,
+            COLORS["blue"],
+            COLORS["text"],
+            COLORS["blue_hover"],
+        )
+        self.temp_export_products_button.pack(side="left", padx=(0, 16))
+        self.temp_export_countries_button = self._button(
+            self.temp_export_toolbar,
+            "수출국가",
+            self.show_temp_export_countries,
+            COLORS["blue"],
+            COLORS["text"],
+            COLORS["blue_hover"],
+        )
+        self.temp_export_countries_button.pack(side="left", padx=(0, 16))
         self.temp_export_range_buttons: dict[int | None, ColorButton] = {}
         for label, months in (("전체", None), ("최근 6개월", 6)):
             button = self._button(
@@ -2245,13 +2264,33 @@ class EconoUpdaterApp(tk.Tk):
     def _set_temp_export_range(self, months: int | None) -> None:
         self.temp_export_range_months = months
         self._update_temp_export_range_styles()
-        self.show_temp_export_graph()
+        if self.temp_export_chart_mode == "products":
+            self.show_temp_export_products()
+        elif self.temp_export_chart_mode == "countries":
+            self.show_temp_export_countries()
+        else:
+            self.show_temp_export_graph()
 
     def show_temp_export_graph(self) -> None:
+        self.temp_export_chart_mode = "daily"
         self.progress_frame.pack_forget()
         self.content.pack_forget()
         self.temp_export_content.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         self.plot_temp_export_graph()
+
+    def show_temp_export_products(self) -> None:
+        self.temp_export_chart_mode = "products"
+        self.progress_frame.pack_forget()
+        self.content.pack_forget()
+        self.temp_export_content.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.plot_temp_export_products()
+
+    def show_temp_export_countries(self) -> None:
+        self.temp_export_chart_mode = "countries"
+        self.progress_frame.pack_forget()
+        self.content.pack_forget()
+        self.temp_export_content.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.plot_temp_export_countries()
 
     def _show_temp_export_update_view(self) -> None:
         self.temp_export_content.pack_forget()
@@ -2431,6 +2470,147 @@ class EconoUpdaterApp(tk.Tk):
         except Exception as exc:
             self._append_log(f"Temp Export Trend 그래프 실패: {exc}", "error")
             messagebox.showerror("잠정 수출 그래프 실패", str(exc))
+
+    def plot_temp_export_products(self) -> None:
+        self._plot_temp_export_breakdown(
+            history_key="export_products",
+            item_label="품목",
+            screen_title="주요품목 수출",
+            figure_title="관세청 잠정 수출 주요품목",
+        )
+
+    def plot_temp_export_countries(self) -> None:
+        self._plot_temp_export_breakdown(
+            history_key="export_countries",
+            item_label="국가",
+            screen_title="주요국가 수출",
+            figure_title="관세청 잠정 수출 주요국가",
+        )
+
+    def _plot_temp_export_breakdown(
+        self,
+        *,
+        history_key: str,
+        item_label: str,
+        screen_title: str,
+        figure_title: str,
+    ) -> None:
+        try:
+            import matplotlib as mpl
+            from matplotlib import dates as mdates
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+
+            mpl.rcParams["font.family"] = "Apple SD Gothic Neo"
+            mpl.rcParams["axes.unicode_minus"] = False
+            if not TEMP_EXPORT_HISTORY_FILE.exists():
+                raise FileNotFoundError(f"주요{item_label} 이력이 없습니다. update를 먼저 실행하세요.")
+            payload = json.loads(TEMP_EXPORT_HISTORY_FILE.read_text(encoding="utf-8"))
+            monthly: list[tuple[datetime, dict[str, float]]] = []
+            for month, entry in payload.get("observations", {}).items():
+                period = entry.get("days_10", {}) if isinstance(entry, dict) else {}
+                items = period.get(history_key, []) if isinstance(period, dict) else []
+                values = {
+                    str(item["name"]): float(item["amount_million_usd"]) / 100.0
+                    for item in items
+                    if isinstance(item, dict)
+                    and item.get("name")
+                    and isinstance(item.get("amount_million_usd"), (int, float))
+                }
+                if values and re.fullmatch(r"\d{4}-\d{2}", month):
+                    monthly.append((datetime.strptime(month, "%Y-%m"), values))
+            monthly.sort(key=lambda row: row[0])
+            if self.temp_export_range_months is not None:
+                now = datetime.now()
+                start_index = now.year * 12 + now.month - self.temp_export_range_months
+                monthly = [
+                    row for row in monthly
+                    if row[0].year * 12 + row[0].month - 1 >= start_index
+                ]
+            if not monthly:
+                raise ValueError(f"선택한 기간의 1~10일 주요{item_label} 데이터가 없습니다.")
+
+            latest_date, latest_values = monthly[-1]
+            ranked = sorted(latest_values.items(), key=lambda item: item[1], reverse=True)
+            trend_items = [name for name, _ in ranked[:5]]
+            palette = {
+                name: color
+                for name, color in zip(
+                    trend_items,
+                    ("#2563EB", "#EA580C", "#0F766E", "#7C3AED", "#B45309"),
+                )
+            }
+
+            self._clear_temp_export_display()
+            figure = Figure(figsize=(13.2, 6.8), dpi=100, facecolor="#FFFFFF")
+            ranking_axis, trend_axis = figure.subplots(
+                1, 2, gridspec_kw={"width_ratios": (0.9, 1.7)}
+            )
+
+            bar_rows = list(reversed(ranked))
+            ranking_axis.barh(
+                [name for name, _ in bar_rows],
+                [value for _, value in bar_rows],
+                color="#2563EB",
+            )
+            ranking_axis.set_xlabel("수출액(억 달러)")
+            ranking_axis.set_title(f"{latest_date:%Y-%m} 1~10일 {item_label}별 수출액", fontsize=11)
+            ranking_axis.grid(axis="x", color="#E2E8F0", linewidth=0.8)
+            ranking_axis.grid(axis="y", visible=False)
+            ranking_axis.set_axisbelow(True)
+            for index, (_, value) in enumerate(bar_rows):
+                ranking_axis.text(value, index, f" {value:,.1f}", va="center", fontsize=8, color="#334155")
+
+            dates = [row[0] for row in monthly]
+            for name in trend_items:
+                trend_axis.plot(
+                    dates,
+                    [values.get(name) for _, values in monthly],
+                    label=name,
+                    color=palette[name],
+                    marker="o",
+                    linewidth=2.2,
+                    markersize=5,
+                )
+            trend_axis.set_ylabel("수출액(억 달러)")
+            trend_axis.set_title(f"상위 5개 {item_label} 월별 변화 · 동일한 1~10일 기준", fontsize=11)
+            trend_axis.grid(axis="y", color="#E2E8F0", linewidth=0.8)
+            trend_axis.grid(axis="x", visible=False)
+            trend_axis.set_axisbelow(True)
+            trend_axis.xaxis.set_major_locator(mdates.MonthLocator(interval=max(1, len(dates) // 8)))
+            trend_axis.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+            trend_axis.tick_params(axis="x", rotation=45)
+            if len(dates) > 1:
+                trend_axis.set_xlim(dates[0], dates[-1])
+            trend_axis.set_ylim(bottom=0)
+            trend_axis.legend(loc="upper left", ncol=2, frameon=False, fontsize=9)
+
+            for axis in (ranking_axis, trend_axis):
+                axis.spines[["top", "right"]].set_visible(False)
+                axis.spines[["left", "bottom"]].set_color("#CBD5E1")
+            figure.suptitle(
+                figure_title,
+                fontsize=16,
+                fontweight="bold",
+                color="#1F2937",
+                y=0.98,
+            )
+            figure.subplots_adjust(left=0.08, right=0.97, top=0.86, bottom=0.18, wspace=0.30)
+            self.temp_export_chart_figure = figure
+            self.temp_export_chart_canvas = FigureCanvasTkAgg(
+                figure, master=self.temp_export_chart_container
+            )
+            self.temp_export_chart_canvas.draw()
+            self.temp_export_chart_canvas.get_tk_widget().pack(fill="both", expand=True)
+            period_label = "전체" if self.temp_export_range_months is None else "최근 6개월"
+            self.temp_export_title_label.configure(text=f"Temp Export Trend · {screen_title}")
+            self.temp_export_subtitle_label.configure(
+                text=f"{dates[0]:%Y-%m}~{dates[-1]:%Y-%m} · {len(dates)}개월 · {period_label} · 1~10일 잠정치"
+            )
+            self._append_log(f"주요{item_label} 월별 그래프 생성 완료: {len(dates)}개월", "success")
+        except Exception as exc:
+            self._append_log(f"주요{item_label} 그래프 실패: {exc}", "error")
+            messagebox.showerror(f"주요{item_label} 그래프 실패", str(exc))
 
     def _set_progress(self, percent: float, label: str) -> None:
         value = max(0.0, min(100.0, percent))
