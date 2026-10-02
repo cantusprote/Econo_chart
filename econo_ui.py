@@ -55,7 +55,7 @@ COLORS = {
 }
 
 GENERAL_SOURCES = [
-    ("KOSPI 월말", "네이버 증권", "KRX 기반 일별 시세의 해당 월 마지막 거래일 종가", "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI"),
+    ("KOSPI 월말", "네이버 증권", "KRX 기반 일별 시세의 해당 월 마지막 거래일 종가", "https://api.finance.naver.com/siseJson.naver?symbol=KOSPI&requestType=1&timeframe=day"),
     ("선행지수 순환변동치", "국가데이터처", "월별 산업활동동향 공식 PDF", "https://www.mods.go.kr/board.es?act=list&bid=216&mid=a10301050100"),
     ("OECD 한국선행지수", "OECD", "SDMX Composite Leading Indicators API", "https://data-explorer.oecd.org/"),
     ("일평균 수출", "산업통상자원부", "NLIC에 게시된 월별 수출입 동향", "https://www.nlic.go.kr/nlic/logpolLi.action"),
@@ -73,7 +73,7 @@ ECONOMIC_STATE_SOURCES = [
 
 GDP_SOURCES = [
     ("명목 GDP(조원)", "국가지표체계·한국은행", "국민소득 명목 GDP(십억원)를 조원으로 변환", "https://www.index.go.kr/unity/potal/eNara/sub/showStblGams3.do?freq=Y&idx_cd=F0131&period=N&stts_cd=F013101"),
-    ("KOSPI 연말", "네이버 증권", "해당 연도 마지막 거래일 KOSPI 종가", "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI"),
+    ("KOSPI 연말", "네이버 증권", "해당 연도 마지막 거래일 KOSPI 종가", "https://api.finance.naver.com/siseJson.naver?symbol=KOSPI&requestType=1&timeframe=day"),
     ("국고채 10년", "한국은행 ECOS", "817Y002 / 010210000, 12월 일별 금리 평균", "https://ecos.bok.or.kr/"),
     ("적정 KOSPI·평가율", "GDP 모델", "기존 ln(GDP)-ln(KOSPI) 모형과 통합문서 수식", "https://www.index.go.kr/unity/potal/eNara/sub/showStblGams3.do?freq=Y&idx_cd=F0131&period=N&stts_cd=F013101"),
 ]

@@ -12,12 +12,14 @@ Network sources:
 
 from __future__ import annotations
 
+import ast
 import calendar
 import copy
 import csv
 import html
 import io
 import json
+import math
 import re
 import statistics
 import urllib.error
@@ -130,28 +132,38 @@ def pdf_text(raw: bytes) -> str:
 
 
 def fetch_kospi_month_end(month: YearMonth) -> tuple[float, str]:
-    target_prefix = f"{month.year:04d}.{month.month:02d}."
-    pattern = re.compile(
-        r'<td class="date">(\d{4}\.\d{2}\.\d{2})</td>\s*'
-        r'<td class="number_1">([\d,]+\.\d+)</td>',
-        re.S,
-    )
+    start = f"{month.compact}01"
+    end = f"{month.compact}{calendar.monthrange(month.year, month.month)[1]:02d}"
+    url = "https://api.finance.naver.com/siseJson.naver?" + urllib.parse.urlencode({
+        "symbol": "KOSPI", "requestType": "1", "startTime": start,
+        "endTime": end, "timeframe": "day",
+    })
+    # Naver returns a Python-style array (single-quoted header), not strict JSON.
+    try:
+        rows = ast.literal_eval(decode_html(http_get(url)).strip())
+    except (ValueError, SyntaxError) as exc:
+        raise UpdateError(f"{month} 네이버 KOSPI 시세 응답 형식이 올바르지 않습니다.") from exc
+    if not isinstance(rows, list):
+        raise UpdateError(f"{month} 네이버 KOSPI 시세 응답이 배열이 아닙니다.")
     observations: list[tuple[str, float]] = []
-    for page in range(1, 80):
-        url = f"https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page={page}"
-        body = decode_html(http_get(url))
-        rows = [(d, float(v.replace(",", ""))) for d, v in pattern.findall(body)]
-        observations.extend((d, v) for d, v in rows if d.startswith(target_prefix))
-        if observations:
-            oldest = min(d for d, _ in rows)
-            if oldest < target_prefix + "01":
-                break
-        if rows and max(d for d, _ in rows) < target_prefix + "01":
-            break
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or not row:
+            continue
+        day = str(row[0])
+        if not re.fullmatch(r"\d{8}", day) or not start <= day <= end:
+            continue
+        try:
+            datetime.strptime(day, "%Y%m%d")
+            value = float(str(row[4]).replace(",", ""))
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError("invalid close")
+        except (IndexError, TypeError, ValueError) as exc:
+            raise UpdateError(f"{month} 네이버 KOSPI 종가가 올바르지 않습니다: {day}") from exc
+        observations.append((day, value))
     if not observations:
         raise UpdateError(f"{month} KOSPI 일별 시세를 찾지 못했습니다.")
     last_date, value = max(observations, key=lambda item: item[0])
-    return value, f"https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI ({last_date})"
+    return value, f"{url} ({last_date[:4]}.{last_date[4:6]}.{last_date[6:]})"
 
 
 def find_mods_release(month: YearMonth) -> tuple[str, str]:

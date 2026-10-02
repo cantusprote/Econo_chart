@@ -502,6 +502,34 @@ def update_workbook(
             for row in range(2, sheet.max_row + 1)
             if sheet.cell(row, 1).value not in (None, "")
         ]
+        last_chart_row = 3 + len(data_rows)
+        # The template has a merged explanatory note below the chart data.
+        # Move that footer before growing the data range into it. openpyxl's
+        # insert_rows moves cell contents but does not move merged ranges.
+        overlapping = [
+            merged for merged in chart_sheet.merged_cells.ranges
+            if merged.min_col <= 4 and merged.max_col >= 1
+            and merged.min_row >= 4 and merged.min_row <= last_chart_row
+        ]
+        if overlapping:
+            footer_row = min(merged.min_row for merged in overlapping)
+            shift = last_chart_row - footer_row + 2
+            footer_merges = [
+                (merged.min_row, merged.max_row, merged.min_col, merged.max_col)
+                for merged in chart_sheet.merged_cells.ranges
+                if merged.min_row >= footer_row
+            ]
+            for min_row, max_row, min_col, max_col in footer_merges:
+                chart_sheet.unmerge_cells(
+                    start_row=min_row, end_row=max_row,
+                    start_column=min_col, end_column=max_col,
+                )
+            chart_sheet.insert_rows(footer_row, shift)
+            for min_row, max_row, min_col, max_col in footer_merges:
+                chart_sheet.merge_cells(
+                    start_row=min_row + shift, end_row=max_row + shift,
+                    start_column=min_col, end_column=max_col,
+                )
         for index, source_row in enumerate(data_rows, start=4):
             chart_sheet.cell(index, 1).value = f'=TEXT(\'Data\'!A{source_row},"yyyy-mm")'
             for target_column, source_column in ((2, "B"), (3, "C")):
