@@ -24,7 +24,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from econo_updater import decode_html, ecos_rows, http_get
+from econo_updater import UpdateError, YearMonth, decode_html, ecos_rows, fetch_kospi_month_end, http_get
 
 
 ROOT = Path(__file__).resolve().parent
@@ -149,55 +149,10 @@ def fetch_nominal_gdp_trillion_krw(year: int, timeout: int = 40) -> tuple[float,
 
 
 def fetch_kospi_year_end(year: int) -> tuple[float, str]:
-    target_start = f"{year:04d}.12.01"
-    target_end = f"{year:04d}.12.31"
-    pattern = re.compile(
-        r'<td class="date">(\d{4}\.\d{2}\.\d{2})</td>\s*'
-        r'<td class="number_1">([\d,]+\.\d+)</td>',
-        re.S,
-    )
-
-    def page_rows(page: int) -> list[tuple[str, float]]:
-        url = f"https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page={page}"
-        body = decode_html(http_get(url))
-        return [(day, float(value.replace(",", ""))) for day, value in pattern.findall(body)]
-
-    low, high = 1, 2_000
-    matching_page: int | None = None
-    while low <= high:
-        page = (low + high) // 2
-        rows = page_rows(page)
-        if not rows:
-            high = page - 1
-            continue
-        newest = max(day for day, _ in rows)
-        oldest = min(day for day, _ in rows)
-        if any(target_start <= day <= target_end for day, _ in rows):
-            matching_page = page
-            break
-        if oldest > target_end:
-            low = page + 1
-        elif newest < target_start:
-            high = page - 1
-        else:
-            matching_page = page
-            break
-    if matching_page is None:
-        raise GDPUpdateError(f"{year}년 12월 KOSPI 시세 페이지를 찾지 못했습니다.")
-
-    observations: list[tuple[str, float]] = []
-    # One Naver page contains only a few trading days. Search a generous band
-    # around the binary-search hit so the final trading day is never omitted.
-    for page in range(max(1, matching_page - 12), matching_page + 13):
-        observations.extend(
-            (day, value)
-            for day, value in page_rows(page)
-            if target_start <= day <= target_end
-        )
-    if not observations:
-        raise GDPUpdateError(f"{year}년 12월 KOSPI 일별 시세를 찾지 못했습니다.")
-    last_day, value = max(observations, key=lambda item: item[0])
-    return value, f"https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI ({last_day})"
+    try:
+        return fetch_kospi_month_end(YearMonth(year, 12))
+    except UpdateError as exc:
+        raise GDPUpdateError(str(exc)) from exc
 
 
 def fetch_treasury_10y_december(year: int) -> tuple[float, str]:
