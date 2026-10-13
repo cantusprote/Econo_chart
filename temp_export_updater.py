@@ -17,6 +17,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from pypdf import PdfReader
 
 
@@ -455,6 +456,49 @@ def copy_row_style(sheet, source_row: int, target_row: int) -> None:
         target.font = copy.copy(source.font)
 
 
+def make_chart_data_room(sheet, last_data_row: int) -> None:
+    """Move the merged footer below the growing A:D chart data table."""
+    overlapping = [
+        merged
+        for merged in sheet.merged_cells.ranges
+        if merged.min_col <= 4
+        and merged.max_row >= 4
+        and merged.min_row <= last_data_row
+    ]
+    if not overlapping:
+        return
+    footer_start = min(merged.min_row for merged in overlapping)
+    if footer_start < 4:
+        raise TempExportError("Chart 시트의 제목 병합 영역이 데이터 영역과 겹칩니다.")
+    offset = last_data_row + 1 - footer_start
+    last_row, last_column = sheet.max_row, sheet.max_column
+    footer_merges = [
+        copy.copy(merged)
+        for merged in sheet.merged_cells.ranges
+        if merged.min_row >= footer_start
+    ]
+    for merged in footer_merges:
+        sheet.unmerge_cells(str(merged))
+    footer_dimensions = {
+        row: copy.copy(dimension)
+        for row, dimension in sheet.row_dimensions.items()
+        if row >= footer_start
+    }
+    for row in footer_dimensions:
+        del sheet.row_dimensions[row]
+    sheet.move_range(
+        f"A{footer_start}:{get_column_letter(last_column)}{last_row}", rows=offset
+    )
+    for row, dimension in footer_dimensions.items():
+        dimension.index = row + offset
+        sheet.row_dimensions[row + offset] = dimension
+    for merged in footer_merges:
+        merged.shift(row_shift=offset)
+        sheet.merge_cells(str(merged))
+    for row in range(footer_start, last_data_row + 1):
+        copy_row_style(sheet, row - 1, row)
+
+
 def update_workbook(
     history: dict,
     workbook_path: Path = WORKBOOK_PATH,
@@ -502,6 +546,8 @@ def update_workbook(
             for row in range(2, sheet.max_row + 1)
             if sheet.cell(row, 1).value not in (None, "")
         ]
+        last_chart_row = 3 + len(data_rows)
+        make_chart_data_room(chart_sheet, last_chart_row)
         for index, source_row in enumerate(data_rows, start=4):
             chart_sheet.cell(index, 1).value = f'=TEXT(\'Data\'!A{source_row},"yyyy-mm")'
             for target_column, source_column in ((2, "B"), (3, "C")):
@@ -509,7 +555,6 @@ def update_workbook(
             chart_sheet.cell(index, 4).value = (
                 f"='Data'!D{source_row}" if sheet.cell(source_row, 4).value not in (None, "") else None
             )
-        last_chart_row = 3 + len(data_rows)
         if chart_sheet._charts and data_rows:
             chart = chart_sheet._charts[0]
             for index, series in enumerate(chart.ser, start=2):
