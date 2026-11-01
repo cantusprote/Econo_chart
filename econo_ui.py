@@ -1929,6 +1929,7 @@ class EconoUpdaterApp(tk.Tk):
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         result_json = ""
+        failure_message = ""
         try:
             self.process = subprocess.Popen(
                 [sys.executable, "-u", str(MOTIR_EXPORT_REPORT_SCRIPT), "--json"],
@@ -1945,12 +1946,17 @@ class EconoUpdaterApp(tk.Tk):
                 if line.startswith("RESULT_JSON "):
                     result_json = line.removeprefix("RESULT_JSON ")
                 else:
+                    if line.startswith("FAILED "):
+                        failure_message = line.removeprefix("FAILED ").strip()
                     self.events.put(("export_line", line))
             code = self.process.wait()
             if code == 0 and result_json:
                 self.events.put(("export_done", result_json))
             else:
-                self.events.put(("export_error", f"종료 코드 {code}"))
+                error = failure_message or (
+                    f"종료 코드 {code}" if code else "처리 결과 데이터를 받지 못했습니다."
+                )
+                self.events.put(("export_error", error))
         except Exception as exc:
             self.events.put(("export_error", str(exc)))
 
@@ -2774,10 +2780,10 @@ class EconoUpdaterApp(tk.Tk):
                     self.export_report_running = False
                     self.download_export_button.configure(state="normal")
                     self.export_stop_button.configure(state="disabled")
-                    self._append_log(f"수출입 동향 다운로드 실패: {payload}", "error")
-                    self.export_subtitle_label.configure(text="다운로드에 실패했습니다. 실행 로그를 확인하세요.")
-                    self._export_message(f"다운로드 실패\n{payload}", color="#B91C1C")
-                    messagebox.showerror("수출입 동향 다운로드 실패", str(payload))
+                    self._append_log(f"수출입 동향 처리 실패: {payload}", "error")
+                    self.export_subtitle_label.configure(text=f"자료 처리 실패: {payload}")
+                    self._export_message(f"자료 처리 실패\n{payload}", color="#B91C1C")
+                    messagebox.showerror("수출입 동향 처리 실패", str(payload))
                 elif kind == "temp_export_line":
                     line = str(payload)
                     if line.startswith("FAILED"):

@@ -342,11 +342,20 @@ def parse_report(article: Article, payload: bytes) -> dict:
     daily_value = float(daily.group(3))
 
     table_page = next(
-        (page for page in pages if "20대" in page and "9대 주요지역별" in page), None
+        (
+            page
+            for page in pages
+            if re.search(r"20\s*대", page)
+            and re.search(r"9\s*대\s*주요\s*지역별", page)
+        ),
+        None,
     )
     if not table_page:
         raise ExportReportError("20대 품목·9대 지역 표가 있는 페이지를 찾지 못했습니다.")
-    product_section, region_section = table_page.split("□ (지역)", 1)
+    sections = re.split(r"□\s*\(\s*지역\s*\)", table_page, maxsplit=1)
+    if len(sections) != 2:
+        raise ExportReportError("품목·지역 표에서 지역 구분 제목을 찾지 못했습니다.")
+    product_section, region_section = sections
     products = [row for row in parse_table_groups(product_section, PRODUCT_GROUPS) if row["name"] != "전체"]
     regions = [row for row in parse_region_table(region_section) if row["name"] != "전체"]
     monthly_trade = parse_monthly_trade(full_text)
